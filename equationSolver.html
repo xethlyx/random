@@ -1,0 +1,427 @@
+<!--
+
+Copyright 2021 xethlyx
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>xethlyx's basic calculator</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Asap&display=swap" rel="stylesheet">
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			background: #0a0b0b;
+			font-size: 0.875rem;
+		}
+
+		.title {
+			font-size: 1.5rem;
+			margin: 0;
+			font-weight: 400;
+		}
+
+		* {
+			box-sizing: border-box;
+			font-family: 'Asap', sans-serif;
+			color: #fff;
+		}
+
+		*:focus {
+			outline: transparent;
+		}
+
+		input[type=text] {
+			background-color: #08090d;
+			color: #fff;
+			border-radius: 5px;
+			font-family: 'Asap', sans-serif;
+			border: 0 transparent;
+			width: 100%;
+			box-sizing: border-box;
+			transition: box-shadow 0.2s ease-out;
+			padding: 0.625rem 0.625rem 0.625rem 0.625rem;
+		}
+
+		input:focus {
+			box-shadow: 0px 0px 0px 2px #1E77EF;
+		}
+
+		.center-content {
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			width: 100vw;
+			height: 100vh;
+		}
+
+		.floating-container {
+			max-width: 40em;
+			width: 100%;
+		}
+
+		.input-container {
+			background-color: #171822;
+			border-radius: 5px;
+			padding: 2.8125rem;
+			box-shadow: 0px 4px 44px 0px rgba(0, 0, 0, 0.5);
+			margin: 2rem;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			gap: 1rem;
+		}
+
+		.input-container * {
+			width: 100%;
+		}
+	</style>
+</head>
+<body>
+	<div class="center-content">
+		<div class="floating-container">
+			<div class="input-container">
+				<h1 class="title">xethlyx's basic calculator</h1>
+				<input id="equation" type="text" placeholder="Enter your equation here"><div id="output">Loading..</div>
+				<details><summary>Internal data structures</summary><span id="internal"></span></details>
+			</div>
+		</div>
+	</div>
+</body>
+</html>
+
+
+
+
+<script>
+/** @type {HTMLInputElement} */
+const input = document.getElementById('equation');
+/** @type {HTMLDivElement} */
+const output = document.getElementById('output');
+/** @type {HTMLSpanElement} */
+const internal = document.getElementById('internal');
+
+/**
+ * @typedef {{ type: 'number', value: number } | { type: 'symbol', value: string } | { type: 'scope', opening: boolean }} Token
+ * @typedef {{ kind: 'parenthesis', children: Array<ASTNode> } | { kind: 'operator', operator: string } | { kind: 'number', value: number }} ASTNode
+ */
+
+class EvaluationError extends Error {}
+
+class Tokenizer {
+	static validOperators = ['^', '*', '/', '+', '-'];
+	static ignoredOperators = [' '];
+
+	/**
+	 * @type {string}
+	 */
+	#input;
+
+	/**
+	 * @type {Array<Token>}
+	 */
+	tokens = [];
+
+	constructor(input) {
+		this.#input = input;
+	}
+
+	tokenize() {
+		let active = '';
+
+		for (const character of this.#input) {
+			if (character.match(/[\d.e]/)) {
+				active = active += character;
+				continue;
+			} else if (active.length !== 0) {
+				const value = Number(active);
+				if (Number.isNaN(value)) throw new EvaluationError('Invalid number');
+
+				active = '';
+				this.tokens.push({
+					type: 'number',
+					value
+				});
+			}
+
+			if (character === '(' || character === ')') {
+				this.tokens.push({
+					type: 'scope',
+					opening: character === '('
+				});
+
+				continue;
+			}
+
+			if (Tokenizer.ignoredOperators.find(entry => entry === character)) continue;
+			if (!Tokenizer.validOperators.find(entry => entry === character)) throw new EvaluationError('Invalid operator');
+
+			this.tokens.push({
+				type: 'symbol',
+				value: character
+			});
+		}
+
+		if (active.length !== 0) {
+			const value = Number(active);
+			if (Number.isNaN(value)) throw new EvaluationError('Invalid number');
+
+			this.tokens.push({
+				type: 'number',
+				value
+			});
+		}
+	}
+}
+
+class AbstractSyntaxTree {
+	/**
+	 * @type {Array<Token>}
+	 */
+	#tokens;
+
+	/**
+	 * @type {ASTNode}
+	 */
+	#tree;
+
+	constructor(tokens) {
+		this.#tokens = tokens;
+	}
+
+	getTree() {
+		return { ...this.#tree };
+	}
+
+	parse() {
+		/** @type {ASTNode} */
+		let root = {
+			kind: 'parenthesis',
+			children: []
+		}
+		let stack = [root];
+
+		for (const token of this.#tokens) {
+			switch (token.type) {
+				case 'scope': {
+					if (token.opening) {
+						/** @type {ASTNode} */
+						const parenthesis = {
+							kind: 'parenthesis',
+							children: []
+						};
+
+						stack[stack.length - 1].children.push(parenthesis)
+						stack.push(parenthesis);
+					} else {
+						const last = stack.pop();
+						if (stack.length === 0) throw new EvaluationError('Mismatched parenthesis');
+						if (last.children.length === 0) throw new EvaluationError('Invalid parenthesis - parenthesis should contain at least 1 child')
+					}
+
+					break;
+				}
+
+				case 'symbol': {
+					stack[stack.length - 1].children.push({
+						kind: 'operator',
+						operator: token.value
+					});
+
+					break;
+				}
+
+				case 'number': {
+					stack[stack.length - 1].children.push({
+						kind: 'number',
+						value: token.value
+					});
+
+					break;
+				}
+			}
+		}
+
+		if (stack.length !== 1) throw new EvaluationError('Mismatched parenthesis');
+		this.#tree = root;
+	}
+
+	/**
+	 * @param {Array<ASTNode>} working
+	 * @param {number} location
+	 */
+	evaluateAroundOperator(working, location) {
+		const operator = working[location];
+		if (operator.kind !== 'operator') throw new EvaluationError('Cannot evalulate non-operator');
+
+		const valueBefore = working[location - 1];
+		const valueAfter = working[location + 1];
+
+		if (!valueAfter || !valueAfter) throw new EvaluationError('Cannot apply operator to nothing');
+		if (valueBefore.kind !== 'number' || valueAfter.kind !== 'number') throw new EvaluationError('Cannot chain operators')
+		working.splice(location, 2);
+
+		let newValue;
+		switch (operator.operator) {
+			case '+': {
+				newValue = valueBefore.value + valueAfter.value;
+				break;
+			}
+
+			case '-': {
+				newValue = valueBefore.value - valueAfter.value;
+				break;
+			}
+
+			case '*': {
+				newValue = valueBefore.value * valueAfter.value;
+				break;
+			}
+
+			case '/': {
+				newValue = valueBefore.value / valueAfter.value;
+				break;
+			}
+
+			case '^': {
+				newValue = valueBefore.value ** valueAfter.value;
+				break;
+			}
+
+			default: throw new EvaluationError('Invalid operator!')
+		}
+
+		working[location - 1] = {
+			kind: 'number',
+			value: newValue
+		};
+	}
+
+	/**
+	 * @param {Array<ASTNode>} working
+	 * @param {string} operator
+	 */
+	evaluateFirstOperator(working, operator) {
+		const operatorLocation = this.findOperator(working, operator);
+		if (operatorLocation === -1) return false;
+
+		this.evaluateAroundOperator(working, operatorLocation);
+		return true;
+	}
+
+	/**
+	 * @param {Array<ASTNode>} working
+	 * @param {string} operator
+	 */
+	findOperator(working, operator) {
+		return working.findIndex(node => node.kind === 'operator' && node.operator === operator);
+	}
+
+	/**
+	 * @param {Array<ASTNode>} working
+	 */
+	injectMultiplication(working) {
+		for (let i = 0; i < working.length; i++) {
+			const node = working[i];
+
+			if (node.kind !== 'parenthesis') continue;
+
+			const nextNode = working[Number(i) + 1];
+			if (!nextNode) continue;
+
+			if (nextNode.kind !== 'number' && nextNode.kind !== 'parenthesis') continue;
+			console.log('injecting', nextNode.kind, working);
+
+			working.splice(i + 1, 0, {
+				kind: 'operator',
+				operator: '*'
+			});
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * @param {Array<ASTNode>} working
+	 */
+	fillMultiplication(working) {
+		const newArray = [...working];
+
+		let entryDepth = 0;
+
+		while (true) {
+			const result = this.injectMultiplication(newArray);
+			if (!result) break;			entryDepth++;
+			if (entryDepth > 10) throw new Error('aaa');
+		}
+
+		return newArray;
+	}
+
+	/**
+	 * @param {ASTNode} node
+	 */
+	evaluate(node = this.#tree) {
+		if (node.kind !== 'parenthesis') throw new EvaluationError('Cannot evaluate non-parenthesis');
+
+		/** @type {Array<ASTNode>} */
+		const workingChildren = this.fillMultiplication(node.children).map(node => {
+			if (node.kind !== 'parenthesis') return node;
+			return {
+				kind: 'number',
+				value: this.evaluate(node)
+			};
+		});
+
+		evaluationLoop:
+		while (workingChildren.find(node => node.kind === 'operator')) {
+			for (const operator of Tokenizer.validOperators) {
+				if (this.evaluateFirstOperator(workingChildren, operator)) continue evaluationLoop;
+			}
+		}
+
+		if (workingChildren[0].kind !== 'number') throw new EvaluationError('Evaluation failed - result not of kind number');
+		return workingChildren[0].value;
+	}
+}
+
+input.addEventListener('input', event => {
+	let outputValue = '';
+
+	try {
+		if (input.value === '') throw new EvaluationError('No input');
+
+		const tokenizer = new Tokenizer(input.value);
+		tokenizer.tokenize();
+
+		const ast = new AbstractSyntaxTree(tokenizer.tokens);
+		ast.parse();
+
+		outputValue = `${ast.evaluate()}`;
+
+		internal.innerHTML = `<b>TOKENS</b>: ${JSON.stringify(tokenizer.tokens)}<br/><br/><b>AST</b>: ${JSON.stringify(ast.getTree())}`;
+	} catch (error) {
+		if (!(error instanceof EvaluationError)) throw error;
+		outputValue = error;
+		internal.innerText = 'N/a';
+	}
+
+	output.innerText = outputValue;
+});
+
+output.innerText = 'Ready!';
+</script>
