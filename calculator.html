@@ -361,12 +361,9 @@ class AbstractSyntaxTree {
 	fillMultiplication(working) {
 		const newArray = [...working];
 
-		let entryDepth = 0;
-
 		while (true) {
 			const result = this.injectMultiplication(newArray);
-			if (!result) break;			entryDepth++;
-			if (entryDepth > 10) throw new Error('aaa');
+			if (!result) break;
 		}
 
 		return newArray;
